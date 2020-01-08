@@ -1,0 +1,559 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "AWS CloudFormation template for the Imaging Scanner V2 microservice assets.",
+
+  "Parameters" : {
+    "ServiceName" : {
+      "Description" : "Name of the service.  Asset names are derived from this value",
+      "Type" : "String",
+      "MinLength":"1",
+      "Default" : "scanner",
+      "AllowedPattern" : "[a-z0-9]*",
+      "ConstraintDescription" : "must be a valid service name."
+    },
+    "PodId" : {
+      "Description" : "The podId of this deployment.  This will be included in the generated name for created AWS assets",
+      "Type" : "String",
+      "MinLength" : "1",
+      "AllowedPattern" : "[a-z0-9_\\-\\.]*",
+      "ConstraintDescription" : "must be a valid pod id."
+    },
+    "DeadletterAlarmEMail" : {
+      "Default" : "RD_Imaging_Team_X-ray@sap.com",
+      "Description" : "EMail address to notify when the deadletter queue exceeds the depth threshold",
+      "Type" : "String",
+      "AllowedPattern" : "([a-zA-Z0-9_\\-\\.]+)@((\\[[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.)|(([a-zA-Z0-9\\-]+\\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\\]?)",
+      "ConstraintDescription": "must be a valid email address."
+    },
+    "CreateS3Storage" : {
+      "Description" : "Whether you should create S3 storage bucket or not.",
+      "Type" : "String",
+      "Default" : "false",
+      "AllowedValues" : ["true","false"]
+    }
+  },
+
+  "Conditions" : {
+    "ShouldCreateS3Storage" : {"Fn::Equals" : [{"Ref" : "CreateS3Storage"}, "true"]}
+  },
+
+  "Resources" : {
+    "PrimaryQueue" : {
+      "Type" : "AWS::SQS::Queue",
+      "Properties" : {
+        "QueueName" : { "Fn::Join": [
+          "-",
+          [
+            "imaging",
+            { "Ref": "ServiceName" },
+            { "Ref": "PodId" }
+          ]
+        ]},
+        "KmsMasterKeyId": "alias/aws/sqs",
+        "KmsDataKeyReusePeriodSeconds": 86400,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": { "Fn::GetAtt" : ["DeadLetterQueue", "Arn"] },
+          "maxReceiveCount": 3
+        }
+      }
+    },
+
+    "DeadLetterQueue" : {
+      "Type" : "AWS::SQS::Queue",
+      "Properties" : {
+        "QueueName" : { "Fn::Join": [
+          "-",
+          [
+            "imaging",
+            { "Ref": "ServiceName" },
+            { "Ref": "PodId" },
+            "deadletter"
+          ]
+        ]},
+        "KmsMasterKeyId": "alias/aws/sqs",
+        "KmsDataKeyReusePeriodSeconds": 86400,
+        "MessageRetentionPeriod" : 1209600
+      }
+    },
+
+    "DeadletterDepthAlarmSnsTopic" : {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName" : { "Fn::Join": [
+          "-",
+          [
+            "imaging",
+            { "Ref": "ServiceName" },
+            { "Ref": "PodId" },
+            "deadletter",
+            "alarm",
+            "topic"
+          ]
+        ]},
+        "Subscription": [{
+          "Endpoint": { "Ref": "DeadletterAlarmEMail" },
+          "Protocol": "email"
+        }]
+      }
+    },
+
+    "DeadletterQueueDepthAlarm" : {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName" : { "Fn::Join": [
+          "-",
+          [
+            "imaging",
+            { "Ref": "ServiceName" },
+            { "Ref": "PodId" },
+            "deadletter-alarm"
+          ]
+        ]},
+        "AlarmDescription": "Queue depth alarm if queue depth grows beyond 10 messages",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [{
+          "Name": "QueueName",
+          "Value" : { "Fn::GetAtt" : ["DeadLetterQueue", "QueueName"] }
+        }],
+        "Statistic": "Sum",
+        "Period": "300",
+        "EvaluationPeriods": "1",
+        "Threshold": "10",
+        "ComparisonOperator": "GreaterThanThreshold",
+        "AlarmActions": [{ "Ref": "DeadletterDepthAlarmSnsTopic" }]
+      }
+    },
+
+    "FileMonitorServiceUser" : {
+      "Type" : "AWS::IAM::User",
+      "Properties" : {
+        "UserName" : { "Fn::Join" : [
+          "-",
+          [ "imaging",
+            { "Ref" : "ServiceName" },
+            { "Ref" : "PodId" },
+            "file-monitor-service-user"
+          ]
+        ]}
+      }
+    },
+
+    "ScannerServiceUser" : {
+      "Type" : "AWS::IAM::User",
+      "Properties" : {
+        "UserName" : { "Fn::Join" : [
+          "-",
+          [ "imaging",
+            { "Ref" : "ServiceName" },
+            { "Ref" : "PodId" },
+            "service-user"
+          ]
+        ]}
+      }
+    },
+
+    "ScannerServiceAccessGroup" : {
+      "Type" : "AWS::IAM::Group",
+      "Properties" : {
+        "GroupName": { "Fn::Join": [
+          "-",
+          [ "imaging",
+            { "Ref": "ServiceName" },
+            { "Ref": "PodId" },
+            "access-group"
+          ]
+        ]}
+      }
+    },
+
+    "FileMonitorAccessGroup" : {
+      "Type" : "AWS::IAM::Group",
+      "Properties" : {
+        "GroupName": { "Fn::Join": [
+          "-",
+          [ "imaging",
+            { "Ref": "ServiceName" },
+            { "Ref": "PodId" },
+            "file-monitor-access-group"
+          ]
+        ]}
+      }
+    },
+
+    "ScannerServiceUsers" : {
+      "Type" : "AWS::IAM::UserToGroupAddition",
+      "Properties" : {
+        "GroupName": { "Ref" : "ScannerServiceAccessGroup" },
+        "Users" : [ { "Ref" : "ScannerServiceUser" } ]
+      }
+    },
+
+    "FileMonitorServiceUsersQueue" : {
+      "Type" : "AWS::IAM::UserToGroupAddition",
+      "Properties" : {
+        "GroupName": { "Ref" : "FileMonitorAccessGroup" },
+        "Users" : [ { "Ref" : "FileMonitorServiceUser" } ]
+      }
+    },
+
+    "SqsConsumerPolicy" : {
+      "Type" : "AWS::IAM::Policy",
+      "Properties" : {
+        "PolicyName" : { "Fn::Join": [
+          "-",
+          [ "imaging",
+            { "Ref": "ServiceName" },
+            { "Ref": "PodId" },
+            "sqs-consumer-policy"
+          ]
+        ]},
+        "PolicyDocument" : {
+          "Statement": [{
+            "Effect"   : "Allow",
+            "Action":[
+              "sqs:ChangeMessageVisibility",
+              "sqs:ChangeMessageVisibilityBatch",
+              "sqs:DeleteMessage",
+              "sqs:DeleteMessageBatch",
+              "sqs:GetQueueAttributes",
+              "sqs:GetQueueUrl",
+              "sqs:ReceiveMessage",
+              "sqs:SendMessage",
+              "sqs:SendMessageBatch"
+            ],
+            "Resource": [
+              { "Fn::GetAtt" : ["PrimaryQueue", "Arn"] },
+              { "Fn::GetAtt" : ["DeadLetterQueue", "Arn"] }
+            ]
+          }]
+        },
+        "Groups" : [{ "Ref" : "ScannerServiceAccessGroup" }]
+      }
+    },
+
+    "SqsPublisherPolicy" : {
+      "Type" : "AWS::IAM::Policy",
+      "Properties" : {
+        "PolicyName" : { "Fn::Join": [
+          "-",
+          [ "imaging",
+            { "Ref": "ServiceName" },
+            { "Ref": "PodId" },
+            "sqs",
+            "publisher",
+            "policy"
+          ]
+        ]},
+        "PolicyDocument" : {
+          "Statement": [{
+            "Effect"   : "Allow",
+            "Action":[
+              "sqs:GetQueueUrl",
+              "sqs:SendMessage",
+              "sqs:SendMessageBatch"
+            ],
+            "Resource": [
+              { "Fn::GetAtt" : ["PrimaryQueue", "Arn"] }
+            ]
+          }]
+        },
+        "Groups" : [{ "Ref" : "FileMonitorAccessGroup" },{ "Ref" : "ScannerServiceAccessGroup" }]
+      }
+    },
+
+    "FileMonitorUserKeys" : {
+      "Type" : "AWS::IAM::AccessKey",
+      "Properties" : {
+        "UserName" : { "Ref": "FileMonitorServiceUser" }
+      }
+    },
+
+    "ScannerUserKeys" : {
+      "Type" : "AWS::IAM::AccessKey",
+      "Properties" : {
+        "UserName" : { "Ref": "ScannerServiceUser" }
+      }
+    },
+
+    "ScannerStoreBucket" : {
+      "Type" : "AWS::S3::Bucket",
+      "Condition" : "ShouldCreateS3Storage",
+      "Properties" : {
+        "BucketName" :  {
+          "Fn::Join" : [
+            "-",
+            [
+              "imaging",
+              {
+                "Ref" : "ServiceName"
+              },
+              {
+                "Ref" : "PodId"
+              },
+              "bucket"
+            ]
+          ]
+        },
+        "PublicAccessBlockConfiguration" : {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "aws:kms"
+              }
+            }
+          ]
+        },
+        "AccessControl" : "Private",
+        "VersioningConfiguration" : {
+          "Status" : "Suspended"
+        }
+      }
+
+    },
+
+    "ScannerStoreBucketDead" : {
+      "Type" : "AWS::S3::Bucket",
+      "Condition" : "ShouldCreateS3Storage",
+      "Properties" : {
+        "BucketName" : {
+          "Fn::Join" : [
+            "-",
+            [
+              "imaging",
+              {
+                "Ref" : "ServiceName"
+              },
+              {
+                "Ref" : "PodId"
+              },
+              "bucket-dead"
+            ]
+          ]
+        },
+        "PublicAccessBlockConfiguration" : {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "aws:kms"
+              }
+            }
+          ]
+        },
+        "AccessControl" : "Private",
+        "VersioningConfiguration" : {
+          "Status":  "Suspended"
+        }
+      }
+    },
+
+    "S3PublisherPolicy" : {
+      "Type" : "AWS::IAM::Policy",
+      "Condition" : "ShouldCreateS3Storage",
+      "Properties" : {
+        "PolicyName" : {
+          "Fn::Join" : [
+            "-",
+            [ "imaging",
+              { "Ref" : "ServiceName" },
+              { "Ref" : "PodId" },
+              "S3-publisher-access-policy"
+            ]
+          ]
+        },
+        "PolicyDocument" : {
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Action" : [
+                "s3:PutObject",
+                "s3:PutObjectAcl"
+              ],
+              "Resource":[
+                {
+                  "Fn::Join":[
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt" : [
+                          "ScannerStoreBucket",
+                          "Arn"
+                        ]},
+                      "*"
+                    ]]
+                }
+              ]
+            }
+          ]
+        },
+        "Groups" : [
+          {
+            "Ref" : "FileMonitorAccessGroup"
+          }
+        ]
+      }
+    },
+
+    "S3PublisherConsumerPolicy" : {
+      "Type" : "AWS::IAM::Policy",
+      "Condition" : "ShouldCreateS3Storage",
+      "Properties" : {
+        "PolicyName" : {
+          "Fn::Join" : [
+            "-",
+            [ "imaging",
+              { "Ref" : "ServiceName" },
+              { "Ref" : "PodId" },
+              "S3-publisher-consumer-access-policy"
+            ]
+          ]
+        },
+        "PolicyDocument" : {
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Action" : [
+                "s3:DeleteObject",
+                "s3:GetObject",
+                "s3:GetObjectAcl",
+                "s3:ListBucket",
+                "s3:PutObject",
+                "s3:PutObjectAcl",
+                "s3:GetBucketAcl"
+              ],
+              "Resource":[
+                {
+                  "Fn::Join":[
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt" : [
+                          "ScannerStoreBucket",
+                          "Arn"
+                        ]},
+                      "*"
+                    ]]
+                },
+                {
+                  "Fn::Join" : [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt" : [
+                          "ScannerStoreBucketDead",
+                          "Arn"
+                        ]},
+                      "*"
+                    ]]
+                }
+              ]
+            }
+          ]
+        },
+        "Groups" : [
+          {
+            "Ref" : "ScannerServiceAccessGroup"
+          }
+        ]
+      }
+    },
+
+    "HttpOnlyBucketPolicyBucket": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ScannerStoreBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "ForceSSLOnlyAccess",
+              "Effect": "Deny",
+              "Principal": { "AWS": "*"},
+              "Action": "s3:*",
+              "Resource": [
+                {"Fn::Join":[ "",[ { "Fn::GetAtt" : ["ScannerStoreBucket", "Arn"]},"/*"]]}
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+
+    "HttpOnlyBucketPolicyBucketDead": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ScannerStoreBucketDead"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "ForceSSLOnlyAccess",
+              "Effect": "Deny",
+              "Principal": { "AWS": "*"},
+              "Action": "s3:*",
+              "Resource": [
+                {"Fn::Join":[ "",[ { "Fn::GetAtt" : ["ScannerStoreBucketDead", "Arn"]},"/*"]]}
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+
+  "Outputs" : {
+    "QueueURL" : {
+      "Description" : "URL of newly created SQS Queue",
+      "Value" : { "Ref" : "PrimaryQueue" }
+    },
+
+    "DeadLetterQueueURL" : {
+      "Description" : "URL of newly created SQS Deadletter Queue",
+      "Value" : { "Ref" : "DeadLetterQueue" }
+    },
+
+    "ScannerReceivedStorage" : {
+      "Description" : "Name of S3 storage bucket for the received documents",
+      "Value" : {
+        "Ref" : "ScannerStoreBucket"
+      },
+      "Condition" : "ShouldCreateS3Storage"
+    },
+
+    "ScannerProcessingErrorStorage" : {
+      "Description" : "Name of S3 storage bucket for the documents Scanner fails processing",
+      "Value" : {
+        "Ref" : "ScannerStoreBucketDead"
+      },
+      "Condition" : "ShouldCreateS3Storage"
+    }
+  }
+
+}

@@ -1,0 +1,50 @@
+version: 0.2
+
+  #env:
+  #variables:
+  #key: "value"
+  #key: "value"
+  #parameter-store:
+  # key: "value"
+  # key: "value"
+#git-credential-helper: yes
+
+phases:
+  install:
+    #If you use the Ubuntu standard image 2.0 or later, you must specify runtime-versions.
+    #If you specify runtime-versions and use an image other than Ubuntu standard image 2.0, the build fails.
+    runtime-versions:
+      python: 3.7
+      # name: version
+      #commands:
+      # - command
+      # - command
+      #pre_build:
+      #commands:
+      # - command
+      # - command
+  build:
+    commands:
+      #TODO: only deploy templates that actually change, for now ignore all failures
+      - aws --region us-west-2 cloudformation create-stack --stack-name ScannerV2-test --template-body file://scannerV2-cloudformation.json --parameters ParameterKey=CreateS3Storage,ParameterValue=true ParameterKey=PodId,ParameterValue=cqax --capabilities CAPABILITY_NAMED_IAM
+#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboarding --template-body file://route53.yml || true
+#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingFront --template-body file://front-route53.yml || true
+#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingReport --template-body file://report-route53.yml || true
+#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingSpend --template-body file://spend-route53.yml || true
+#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingTools --template-body file://tools-route53.yml || true
+#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingTravel --template-body file://travel-route53.yml || true
+
+      #post_build:
+      #commands:
+      # - command
+      # - command
+    #artifacts:
+    #files:
+    # - location
+    # - location
+    #name: $(date +%Y-%m-%d)
+    #discard-paths: yes
+    #base-directory: location
+    #cache:
+    #paths:
+    # - paths
