@@ -27,12 +27,6 @@ phases:
     commands:
       #TODO: only deploy templates that actually change, for now ignore all failures
       - aws --region us-west-2 cloudformation create-stack --stack-name ScannerV2-test --template-body file://scannerV2-cloudformation.json --parameters ParameterKey=CreateS3Storage,ParameterValue=true ParameterKey=PodId,ParameterValue=cqax --capabilities CAPABILITY_NAMED_IAM
-#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboarding --template-body file://route53.yml || true
-#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingFront --template-body file://front-route53.yml || true
-#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingReport --template-body file://report-route53.yml || true
-#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingSpend --template-body file://spend-route53.yml || true
-#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingTools --template-body file://tools-route53.yml || true
-#      - aws --debug --region us-gov-west-1 cloudformation update-stack --stack-name DNSOnboardingTravel --template-body file://travel-route53.yml || true
 
       #post_build:
       #commands:
